@@ -163,8 +163,67 @@ function parseMessageText(item: Record<string, unknown> | undefined): string | u
   }
 
   if (item.type === "userMessage" && Array.isArray(item.content)) {
-    const first = item.content[0] as { text?: string } | undefined;
-    return first?.text;
+    const parts = item.content as Array<Record<string, unknown>>;
+    const rendered = parts
+      .map((part) => {
+        if (typeof part.text === "string") {
+          return part.text;
+        }
+
+        if (part.type === "image" && typeof part.url === "string") {
+          return `[image: ${part.url}]`;
+        }
+
+        if ((part.type === "image_url" || part.type === "input_image") && part.image_url) {
+          const imagePart = part as {
+            image_url?: string | { url?: string };
+          };
+          const imageUrl =
+            typeof imagePart.image_url === "string"
+              ? imagePart.image_url
+              : typeof imagePart.image_url?.url === "string"
+                ? imagePart.image_url.url
+                : null;
+          return imageUrl ? `[image: ${imageUrl}]` : null;
+        }
+
+        if (part.type === "localImage" && typeof part.path === "string") {
+          return `[local image: ${part.path}]`;
+        }
+
+        if (part.type === "file" || part.type === "input_file") {
+          const filePart = part as {
+            file?: {
+              filename?: string;
+              path?: string;
+              file_url?: string;
+              url?: string;
+            };
+            filename?: string;
+            path?: string;
+            file_url?: string;
+            url?: string;
+          };
+          const descriptor =
+            typeof filePart.file === "object" && filePart.file !== null ? filePart.file : filePart;
+          const name =
+            typeof descriptor.filename === "string"
+              ? descriptor.filename
+              : typeof descriptor.path === "string"
+                ? descriptor.path
+                : typeof descriptor.file_url === "string"
+                  ? descriptor.file_url
+                  : typeof descriptor.url === "string"
+                    ? descriptor.url
+                    : "attachment";
+          return `[file: ${name}]`;
+        }
+
+        return null;
+      })
+      .filter((value): value is string => Boolean(value));
+
+    return rendered.join("\n");
   }
 
   return undefined;

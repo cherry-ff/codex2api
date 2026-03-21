@@ -72,8 +72,55 @@ export interface JobEventRecord {
 
 export interface ChatMessage {
   role: "system" | "developer" | "user" | "assistant" | "tool";
-  content: string;
+  content: string | ChatMessageContentPart[];
 }
+
+export interface ChatMessageTextContentPart {
+  type: "text" | "input_text";
+  text: string;
+}
+
+export interface ChatMessageImageContentPart {
+  type: "image_url" | "input_image";
+  image_url:
+    | string
+    | {
+        url: string;
+      };
+}
+
+export interface ChatMessageImageContentPartLegacy {
+  type: "image";
+  url: string;
+}
+
+export interface ChatMessageFileDescriptor {
+  file_id?: string;
+  filename?: string;
+  mime_type?: string;
+  file_data?: string;
+  path?: string;
+  file_url?: string;
+  url?: string;
+}
+
+export interface ChatMessageFileContentPart {
+  type: "file" | "input_file";
+  file?: ChatMessageFileDescriptor;
+  file_id?: string;
+  filename?: string;
+  mime_type?: string;
+  file_data?: string;
+  path?: string;
+  file_url?: string;
+  url?: string;
+}
+
+export type ChatMessageContentPart =
+  | ChatMessageTextContentPart
+  | ChatMessageImageContentPart
+  | ChatMessageImageContentPartLegacy
+  | ChatMessageFileContentPart;
 
 export interface ChatCompletionRequestBody {
   model?: string;
@@ -91,6 +138,7 @@ export interface JobRequest {
   model: string;
   stream: boolean;
   messages: ChatMessage[];
+  preparedInput?: PreparedCodexInput;
   metadata?: Record<string, unknown>;
   requestBody: ChatCompletionRequestBody;
 }
@@ -116,6 +164,26 @@ export interface JobRuntimeEvent {
   type: string;
   payload: Record<string, unknown>;
   createdAt: string;
+}
+
+export type CodexTurnInput =
+  | {
+      type: "text";
+      text: string;
+      text_elements: [];
+    }
+  | {
+      type: "image";
+      url: string;
+    }
+  | {
+      type: "localImage";
+      path: string;
+    };
+
+export interface PreparedCodexInput {
+  input: CodexTurnInput[];
+  cleanupPaths: string[];
 }
 
 export interface AccountSnapshot {

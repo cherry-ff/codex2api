@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { ApprovalPolicy, SandboxMode } from "./config.js";
-import type { AccountSnapshot, JobExecutionResult, JobRuntimeEvent, TokenUsage } from "./types.js";
+import type { AccountSnapshot, CodexTurnInput, JobExecutionResult, JobRuntimeEvent, TokenUsage } from "./types.js";
 
 interface RpcMessage {
   method?: string;
@@ -21,7 +21,7 @@ interface RpcMessage {
 interface ExecutionOptions {
   model: string;
   cwd: string;
-  prompt: string;
+  input: CodexTurnInput[];
   sandbox: SandboxMode;
   approvalPolicy: ApprovalPolicy;
   timeoutMs: number;
@@ -192,13 +192,7 @@ export class CodexAppServerClient extends EventEmitter {
 
     const turnResponse = (await this.request("turn/start", {
       threadId,
-      input: [
-        {
-          type: "text",
-          text: options.prompt,
-          text_elements: []
-        }
-      ]
+      input: options.input
     })) as { turn: { id: string } };
 
     const turnId = turnResponse.turn.id;

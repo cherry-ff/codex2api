@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 
 import { config } from "./config.js";
 import { AppDb } from "./db.js";
+import { prepareCodexInput } from "./openai.js";
 import { formatChatCompletion, createChunk, createUsageChunk, newCompletionId } from "./openai.js";
 import { JobQueue } from "./job-queue.js";
 import { RuntimeManager } from "./runtime-manager.js";
@@ -15,6 +16,11 @@ function requireAdminToken(request: { headers: Record<string, unknown> }): boole
 
   const authHeader = String(request.headers.authorization ?? "");
   return authHeader === `Bearer ${config.adminToken}`;
+}
+
+function isInputValidationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return message.startsWith("invalid multimodal input:");
 }
 
 export async function buildServer() {
@@ -176,7 +182,7 @@ export async function buildServer() {
 
   app.post("/api/jobs/:id/cancel", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const cancelled = jobQueue.cancel(id);
+    const cancelled = await jobQueue.cancel(id);
     if (!cancelled) {
       return reply.code(404).send({ error: "job not found or not cancellable" });
     }
@@ -210,21 +216,57 @@ export async function buildServer() {
       return reply.code(400).send({ error: "no workspace configured" });
     }
 
+    const workspace = db.getWorkspace(workspaceId);
+    if (!workspace || !workspace.enabled) {
+      return reply.code(400).send({ error: "workspace not available" });
+    }
+
+    let preparedInput;
+    try {
+      preparedInput = await prepareCodexInput(body.messages, workspace.path);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "invalid multimodal input" });
+    }
+
     if (runtimeManager.getReadyAccounts().length === 0) {
       return reply.code(503).send({ error: "no ready Codex accounts available" });
     }
 
-    const handle = jobQueue.enqueue({
-      workspaceId,
-      model: body.model ?? config.defaultModel,
-      stream: Boolean(body.stream),
-      messages: body.messages,
-      metadata: body.metadata,
-      requestBody: body
-    });
+    let handle;
+    try {
+      handle = jobQueue.enqueue({
+        workspaceId,
+        model: body.model ?? config.defaultModel,
+        stream: Boolean(body.stream),
+        messages: body.messages,
+        preparedInput,
+        metadata: body.metadata,
+        requestBody: body
+      });
+    } catch (error) {
+      const { unlink } = await import("node:fs/promises");
+      await Promise.all(
+        preparedInput.cleanupPaths.map(async (filePath) => {
+          try {
+            await unlink(filePath);
+          } catch {
+            // Ignore cleanup failures before queueing.
+          }
+        })
+      );
+      const message = error instanceof Error ? error.message : "failed to enqueue job";
+      return reply.code(message === "queue is full" ? 429 : 500).send({ error: message });
+    }
 
     if (!body.stream) {
-      const result = await handle.result;
+      let result;
+      try {
+        result = await handle.result;
+      } catch (error) {
+        return reply
+          .code(isInputValidationError(error) ? 400 : 500)
+          .send({ error: error instanceof Error ? error.message : "job failed" });
+      }
       const job = db.getJob(handle.job.id);
       if (!job) {
         return reply.code(500).send({ error: "job record missing" });

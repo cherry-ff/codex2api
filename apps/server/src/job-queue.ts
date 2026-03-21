@@ -1,8 +1,9 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
 
 import { config } from "./config.js";
 import { AppDb } from "./db.js";
-import { buildCodexPrompt } from "./openai.js";
+import { prepareCodexInput } from "./openai.js";
 import { RuntimeManager } from "./runtime-manager.js";
 import type {
   JobExecutionResult,
@@ -71,10 +72,11 @@ export class JobQueue {
     return () => this.eventBus.off(jobId, listener);
   }
 
-  cancel(jobId: string): boolean {
+  async cancel(jobId: string): Promise<boolean> {
     const queuedIndex = this.queuedJobs.findIndex((item) => item.job.id === jobId);
     if (queuedIndex >= 0) {
       const [queuedJob] = this.queuedJobs.splice(queuedIndex, 1);
+      await this.cleanupPreparedFiles(queuedJob.request.preparedInput?.cleanupPaths ?? []);
       this.db.updateJob(jobId, {
         status: "cancelled",
         finishedAt: new Date().toISOString(),
@@ -172,6 +174,7 @@ export class JobQueue {
   private async runJob(candidate: QueuedJob, accountId: string, workspace: WorkspaceRecord): Promise<void> {
     const runtime = await this.runtimeManager.ensureRuntime(accountId);
     const startedAt = new Date().toISOString();
+    let preparedInput = candidate.request.preparedInput;
 
     this.db.updateJob(candidate.job.id, {
       accountId,
@@ -186,10 +189,12 @@ export class JobQueue {
     });
 
     try {
+      preparedInput ??= await prepareCodexInput(candidate.request.messages, workspace.path);
+
       const result = await runtime.execute({
         model: candidate.request.model,
         cwd: workspace.path,
-        prompt: buildCodexPrompt(candidate.request.messages),
+        input: preparedInput.input,
         sandbox: config.defaultSandbox,
         approvalPolicy: config.defaultApprovalPolicy,
         timeoutMs: config.turnTimeoutMs,
@@ -213,6 +218,7 @@ export class JobQueue {
       });
       candidate.reject(new Error(message));
     } finally {
+      await this.cleanupPreparedFiles(preparedInput?.cleanupPaths ?? []);
       this.runningJobs.delete(candidate.job.id);
       this.workspaceLocks.delete(workspace.id);
       void this.schedule();
@@ -259,5 +265,17 @@ export class JobQueue {
       createdAt: event.createdAt
     });
     this.eventBus.emit(jobId, event);
+  }
+
+  private async cleanupPreparedFiles(paths: string[]): Promise<void> {
+    await Promise.all(
+      paths.map(async (filePath) => {
+        try {
+          await fs.unlink(filePath);
+        } catch {
+          // Ignore missing temp files.
+        }
+      })
+    );
   }
 }

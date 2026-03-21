@@ -9,7 +9,8 @@
   "scripts": {
     "dev:server": "npm run dev --workspace @codex2api/server",
     "dev:web": "npm run dev --workspace @codex2api/web",
-    "build": "npm run build --workspace @codex2api/server && npm run build --workspace @codex2api/web"
+    "build": "npm run build --workspace @codex2api/server && npm run build --workspace @codex2api/web",
+    "verify:agent": "node scripts/verify-api-agent.mjs",
+    "verify:live": "node scripts/verify-live.mjs"
   }
 }
-
