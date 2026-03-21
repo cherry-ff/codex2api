@@ -1,0 +1,15 @@
+node_modules
+dist
+.DS_Store
+.env
+data/
+apps/server/data/
+generated/
+!generated/app-server-ts/
+!generated/app-server-schema/
+.idea/
+.venv/
+__pycache__/
+apps/web/src/*.js
+apps/web/vite.config.js
+apps/web/src/*.js.map
