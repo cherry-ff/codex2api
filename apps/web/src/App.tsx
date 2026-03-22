@@ -153,6 +153,54 @@ function formatWindowLabel(value: number | null): string {
   return `${value}m quota`;
 }
 
+function remainingPercent(window: RateLimitWindow | null): number {
+  if (!window) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(100, 100 - window.usedPercent));
+}
+
+function formatQuotaLeft(window: RateLimitWindow | null): string {
+  if (!window) {
+    return "-";
+  }
+
+  return `${remainingPercent(window).toFixed(1)}%`;
+}
+
+function quotaTone(window: RateLimitWindow | null): "high" | "medium" | "low" {
+  const remaining = remainingPercent(window);
+
+  if (remaining >= 60) {
+    return "high";
+  }
+
+  if (remaining >= 30) {
+    return "medium";
+  }
+
+  return "low";
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+
+  return new Date(value).toLocaleString();
+}
+
+function normalizeClassName(value: string | null | undefined): string {
+  const normalized = String(value ?? "default")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || "default";
+}
+
 function parseMessageText(item: Record<string, unknown> | undefined): string | undefined {
   if (!item) {
     return undefined;
@@ -511,6 +559,21 @@ export default function App() {
   const selectedWorkspaceLabel = selectedJob
     ? workspaceNameById.get(selectedJob.workspaceId) ?? selectedJob.workspaceId
     : "-";
+  const totalAccounts = overview?.accountCount ?? accounts.length;
+  const readyAccounts =
+    overview?.readyAccountCount ?? accounts.filter((account) => account.status === "ready").length;
+  const queuedJobs =
+    overview?.queuedJobCount ?? jobs.filter((job) => job.status === "queued").length;
+  const runningJobs =
+    overview?.runningJobCount ?? jobs.filter((job) => job.status === "running").length;
+  const readyWorkspaceCount = workspaces.filter((workspace) => workspace.enabled).length;
+  const latestJob = jobs[0] ?? null;
+  const isInitialLoading =
+    overview === null &&
+    accounts.length === 0 &&
+    workspaces.length === 0 &&
+    jobs.length === 0 &&
+    !error;
 
   async function refreshAll() {
     try {
@@ -736,124 +799,191 @@ export default function App() {
 
   return (
     <div className="shell">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">codex2api</p>
-          <h1>Multi-account Codex runtime board</h1>
-          <p className="hero-copy">
-            Manage imported ChatGPT accounts, watch live Codex usage windows, and inspect queued or
-            running jobs from a single surface.
-          </p>
+      <header className="hero hero-compact">
+        <div className="hero-topline">
+          <div className="hero-main hero-main-compact">
+            <div className="hero-title">
+              <p className="eyebrow">codex2api</p>
+              <h1>Account quota board</h1>
+            </div>
+            <p className="hero-inline-meta">
+              {latestJob
+                ? `Latest job ${latestJob.id.slice(0, 8)}`
+                : `${readyWorkspaceCount} enabled workspace paths`}
+            </p>
+          </div>
+          <div className="hero-summary">
+            <article>
+              <span>Accounts</span>
+              <strong>{totalAccounts}</strong>
+            </article>
+            <article>
+              <span>Ready</span>
+              <strong>{readyAccounts}</strong>
+            </article>
+            <article>
+              <span>Running</span>
+              <strong>{runningJobs}</strong>
+            </article>
+            <article>
+              <span>Queued</span>
+              <strong>{queuedJobs}</strong>
+            </article>
+            <article>
+              <span>Latest job</span>
+              <strong>{latestJob ? latestJob.id.slice(0, 8) : "-"}</strong>
+            </article>
+            <article>
+              <span>Workspaces</span>
+              <strong>{readyWorkspaceCount}</strong>
+            </article>
+          </div>
         </div>
-        <div className="stats">
-          <article>
-            <span>Accounts</span>
-            <strong>{overview?.accountCount ?? 0}</strong>
-          </article>
-          <article>
-            <span>Ready</span>
-            <strong>{overview?.readyAccountCount ?? 0}</strong>
-          </article>
-          <article>
-            <span>Queued</span>
-            <strong>{overview?.queuedJobCount ?? 0}</strong>
-          </article>
-          <article>
-            <span>Running</span>
-            <strong>{overview?.runningJobCount ?? 0}</strong>
-          </article>
-        </div>
+        <section className="hero-config">
+          <div className="hero-config-head">
+            <div>
+              <p className="section-label">Component config</p>
+              <h2>API token</h2>
+            </div>
+            <div className="panel-head-meta">
+              <span className={`pill ${savedAdminToken ? "pill-success" : "pill-muted"}`}>
+                {savedAdminToken ? "Token loaded" : "Token missing"}
+              </span>
+              <span className="pill pill-muted">Auto refresh 5s</span>
+            </div>
+          </div>
+          <form className="auth-form auth-form-compact" onSubmit={handleSaveAdminToken}>
+            <label className="token-field">
+              <span>Admin token</span>
+              <input
+                type="password"
+                placeholder="ADMIN_TOKEN for deployed server"
+                value={adminTokenDraft}
+                onChange={(event) => setAdminTokenDraft(event.target.value)}
+              />
+            </label>
+            <div className="token-actions">
+              <button type="submit">Save</button>
+              <button className="secondary-button" onClick={clearAdminToken} type="button">
+                Clear
+              </button>
+            </div>
+          </form>
+        </section>
       </header>
-
-      <section className="panel auth-panel">
-        <div className="panel-head">
-          <h2>API access</h2>
-          <span>{savedAdminToken ? "Bearer token loaded" : "No token configured in browser"}</span>
-        </div>
-        <form className="auth-form" onSubmit={handleSaveAdminToken}>
-          <input
-            type="password"
-            placeholder="ADMIN_TOKEN for deployed server"
-            value={adminTokenDraft}
-            onChange={(event) => setAdminTokenDraft(event.target.value)}
-          />
-          <button type="submit">Save token</button>
-          <button className="secondary-button" onClick={clearAdminToken} type="button">
-            Clear
-          </button>
-        </form>
-      </section>
 
       {error ? (
         <section className="panel alert">
-          <span>{error}</span>
+          <div>
+            <p className="section-label">System notice</p>
+            <strong>{error}</strong>
+          </div>
           <button onClick={() => setError(null)}>Dismiss</button>
         </section>
       ) : null}
 
-      <main className="grid">
-        <section className="panel full accounts-panel">
-          <div className="panel-head">
-            <h2>Accounts</h2>
-            <span>Imported Codex runtimes</span>
+      <section className="panel full accounts-panel accounts-panel-primary">
+        <div className="section-heading">
+          <div>
+            <p className="section-label">Quota focus</p>
+            <h2>Account balances</h2>
           </div>
-          <div className="cards">
-            {accounts.map((account) => {
-              const rateLimit = account.rateLimits[0];
-              const primary = rateLimit?.primary;
-              const secondary = rateLimit?.secondary;
-              const primaryLabel = formatWindowLabel(primary?.windowDurationMins ?? null);
-              const secondaryLabel = formatWindowLabel(secondary?.windowDurationMins ?? null);
-              return (
-                <article className="card account-card" key={account.id}>
-                  <div className="card-head">
-                    <div>
-                      <h3>{account.name}</h3>
-                      <p>{account.email ?? account.authType ?? "unknown"}</p>
-                    </div>
-                    <span className={`status status-${account.status}`}>{account.status}</span>
-                  </div>
-                  <dl>
-                    <div>
-                      <dt>Plan</dt>
-                      <dd>{account.planType ?? "-"}</dd>
-                    </div>
-                    <div>
-                      <dt>{primaryLabel} left</dt>
-                      <dd>{primary ? `${Math.max(0, 100 - primary.usedPercent).toFixed(1)}%` : "-"}</dd>
-                    </div>
-                    <div>
-                      <dt>{primaryLabel} reset</dt>
-                      <dd>{primary ? formatResetAt(primary.resetsAt) : "-"}</dd>
-                    </div>
-                    <div>
-                      <dt>{secondaryLabel} left</dt>
-                      <dd>{secondary ? `${Math.max(0, 100 - secondary.usedPercent).toFixed(1)}%` : "-"}</dd>
-                    </div>
-                    <div>
-                      <dt>{secondaryLabel} reset</dt>
-                      <dd>{secondary ? formatResetAt(secondary.resetsAt) : "-"}</dd>
-                    </div>
-                  </dl>
-                  {account.lastError ? <p className="error-text">{account.lastError}</p> : null}
-                  <div className="action-row account-actions">
-                    <button
-                      disabled={busy === `refresh-${account.id}`}
-                      onClick={() => void refreshAccount(account.id)}
-                    >
-                      {busy === `refresh-${account.id}` ? "Refreshing..." : "Refresh"}
-                    </button>
-                    <button
-                      className="secondary-button"
-                      disabled={busy === `restart-${account.id}`}
-                      onClick={() => void restartAccount(account.id)}
-                    >
-                      {busy === `restart-${account.id}` ? "Restarting..." : "Restart"}
-                    </button>
-                  </div>
+          <div className="panel-head-meta">
+            <span className="pill">{accounts.length} loaded</span>
+            <span className="pill pill-muted">{readyAccounts} ready</span>
+            <button className="ghost-button compact-button" onClick={() => void refreshAll()} type="button">
+              Refresh now
+            </button>
+          </div>
+        </div>
+        <div className="cards cards-compact">
+          {isInitialLoading
+            ? Array.from({ length: 4 }, (_, index) => (
+                <article className="card skeleton-card" key={`account-skeleton-${index}`}>
+                  <div className="skeleton-line skeleton-line-title" />
+                  <div className="skeleton-line" />
+                  <div className="skeleton-line skeleton-line-wide" />
+                  <div className="skeleton-line" />
+                  <div className="skeleton-line skeleton-line-short" />
                 </article>
-              );
-            })}
+              ))
+            : null}
+          {!isInitialLoading && accounts.length === 0 ? (
+            <article className="card empty-card">
+              <p className="empty-title">No accounts imported</p>
+              <p className="empty-copy">
+                Add an `auth.json` cache to start routing Codex work through this surface.
+              </p>
+            </article>
+          ) : null}
+          {accounts.map((account) => {
+            const rateLimit = account.rateLimits[0];
+            const primary = rateLimit?.primary;
+            const secondary = rateLimit?.secondary;
+            const primaryLabel = formatWindowLabel(primary?.windowDurationMins ?? null);
+            const secondaryLabel = formatWindowLabel(secondary?.windowDurationMins ?? null);
+            return (
+              <article
+                className={`card account-card account-card-compact tone-${normalizeClassName(account.status)}`}
+                key={account.id}
+              >
+                <div className="card-head">
+                  <div>
+                    <h3>{account.name}</h3>
+                    <p>{account.email ?? account.authType ?? "unknown"}</p>
+                  </div>
+                  <span className={`status status-${normalizeClassName(account.status)}`}>
+                    {account.status}
+                  </span>
+                </div>
+                <div className="account-balance-grid">
+                  {[
+                    { label: primaryLabel, window: primary, featured: true },
+                    { label: secondaryLabel, window: secondary, featured: false }
+                  ].map((quota) => (
+                    <div
+                      className={`quota-card ${quota.featured ? "quota-card-featured" : "quota-card-secondary"} quota-card-tone-${quotaTone(quota.window)}`}
+                      key={`${account.id}-${quota.label}`}
+                    >
+                      <div className="quota-head">
+                        <span>{quota.label}</span>
+                        <strong>{formatQuotaLeft(quota.window)}</strong>
+                      </div>
+                      <div className="quota-meter" aria-hidden="true">
+                        <span style={{ width: `${remainingPercent(quota.window)}%` }} />
+                      </div>
+                      <div className="quota-meta">
+                        <small>Reset {quota.window ? formatResetAt(quota.window.resetsAt) : "-"}</small>
+                        <small>{quota.window ? `${quota.window.usedPercent.toFixed(1)}% used` : "no data"}</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="account-meta">
+                  <span>{account.planType ?? "No plan tag"}</span>
+                  <span>{account.authType ?? "Auth type unknown"}</span>
+                </div>
+                {account.lastError ? <p className="error-text">{account.lastError}</p> : null}
+                <div className="action-row account-actions">
+                  <button
+                    className="account-action-button"
+                    disabled={busy === `refresh-${account.id}`}
+                    onClick={() => void refreshAccount(account.id)}
+                  >
+                    {busy === `refresh-${account.id}` ? "Refreshing..." : "Refresh"}
+                  </button>
+                  <button
+                    className="secondary-button account-action-button account-action-button-secondary"
+                    disabled={busy === `restart-${account.id}`}
+                    onClick={() => void restartAccount(account.id)}
+                  >
+                    {busy === `restart-${account.id}` ? "Restarting..." : "Restart"}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+          {!isInitialLoading ? (
             <article className={`card account-card add-card ${showImportCard ? "add-card-open" : ""}`}>
               {!showImportCard ? (
                 <button className="add-card-button" onClick={() => setShowImportCard(true)} type="button">
@@ -896,70 +1026,108 @@ export default function App() {
                 </form>
               )}
             </article>
-          </div>
-        </section>
+          ) : null}
+        </div>
+      </section>
 
+      <main className="grid">
         <section className="panel log-panel">
-          <div className="panel-head">
-            <h2>Job Stream Log</h2>
+          <div className="section-heading">
+            <div className="section-heading-copy">
+              <p className="section-label">Execution stream</p>
+              <h2>Job stream log</h2>
+              <p className="section-copy">Raw event stream for the selected job.</p>
+            </div>
             <div className="panel-head-meta">
-              {selectedJob ? (
-                <span>
-                  {selectedAccountLabel} · {selectedWorkspaceLabel}
-                </span>
-              ) : (
-                <span>Select a job to inspect</span>
-              )}
-              {selectedJob ? <span className="pill">Live events</span> : null}
+              <span className="pill pill-muted">{selectedJob ? selectedAccountLabel : "No account selected"}</span>
+              <span className="pill pill-muted">{latestJob ? latestJob.id.slice(0, 8) : "No jobs yet"}</span>
             </div>
           </div>
-          {selectedJob ? (
+          {isInitialLoading ? (
+            <div className="stack">
+              <div className="skeleton-line skeleton-line-title" />
+              <div className="skeleton-line skeleton-line-wide" />
+              <div className="terminal-log skeleton-terminal" />
+            </div>
+          ) : selectedJob ? (
             <div className="stream">
-              <div className="log-meta">
-                <span>{selectedJob.id.slice(0, 8)}</span>
-                <p>Status: {selectedJob.status}</p>
-                <p>Account: {selectedAccountLabel}</p>
-                <p>Workspace: {selectedWorkspaceLabel}</p>
-                <p>
-                  Tokens:{" "}
-                  {selectedJob.inputTokens !== null || selectedJob.outputTokens !== null
-                    ? `${selectedJob.inputTokens ?? 0} in / ${selectedJob.outputTokens ?? 0} out`
-                    : "-"}
-                </p>
-                <p>Cached: {selectedJob.cachedInputTokens ?? "-"}</p>
-                <p>Reasoning: {selectedJob.reasoningOutputTokens ?? "-"}</p>
-                <p>Error: {selectedJob.errorMessage ?? "-"}</p>
+              <div className="stream-summary-grid">
+                <article className={`stream-summary-card tone-${normalizeClassName(selectedJob.status)}`}>
+                  <span>Status</span>
+                  <strong>{selectedJob.status}</strong>
+                  <p>{selectedJob.model}</p>
+                </article>
+                <article className="stream-summary-card">
+                  <span>Context</span>
+                  <strong>{selectedAccountLabel}</strong>
+                  <p>{selectedWorkspaceLabel}</p>
+                </article>
+                <article className="stream-summary-card">
+                  <span>Usage</span>
+                  <strong>
+                    {selectedJob.inputTokens !== null || selectedJob.outputTokens !== null
+                      ? `${selectedJob.inputTokens ?? 0} / ${selectedJob.outputTokens ?? 0}`
+                      : "-"}
+                  </strong>
+                  <p>
+                    Cached {selectedJob.cachedInputTokens ?? "-"} · Reasoning {selectedJob.reasoningOutputTokens ?? "-"}
+                  </p>
+                </article>
+                <article className="stream-summary-card">
+                  <span>Timeline</span>
+                  <strong>{formatDateTime(selectedJob.startedAt ?? selectedJob.createdAt)}</strong>
+                  <p>{selectedJob.finishedAt ? `Finished ${formatDateTime(selectedJob.finishedAt)}` : "Awaiting completion"}</p>
+                </article>
               </div>
-              <div className="terminal-log">
-                {streamEntries.map((entry) => (
-                  <details className={`terminal-entry terminal-${entry.tone}`} key={entry.id}>
-                    <summary className="terminal-line">
-                      <span className="terminal-time">
-                        [{new Date(entry.createdAt).toLocaleTimeString([], { hour12: false })}]
-                      </span>
-                      <span className={`terminal-level terminal-level-${entry.tone}`}>{streamLevel(entry)}:</span>
-                      <span className="terminal-text">{streamLine(entry)}</span>
-                    </summary>
-                    <div className="terminal-detail">
-                      {entry.body ? <pre className="terminal-body">{entry.body}</pre> : null}
-                      <div className="stream-raw">
-                        <pre>{JSON.stringify(entry.raw, null, 2)}</pre>
+              {selectedJob.errorMessage ? <p className="error-text">{selectedJob.errorMessage}</p> : null}
+              {streamEntries.length > 0 ? (
+                <div className="terminal-log">
+                  {streamEntries.map((entry) => (
+                    <details className={`terminal-entry terminal-${entry.tone}`} key={entry.id}>
+                      <summary className="terminal-line">
+                        <span className="terminal-time">
+                          [{new Date(entry.createdAt).toLocaleTimeString([], { hour12: false })}]
+                        </span>
+                        <span className={`terminal-level terminal-level-${entry.tone}`}>
+                          {streamLevel(entry)}:
+                        </span>
+                        <span className="terminal-text">{streamLine(entry)}</span>
+                      </summary>
+                      <div className="terminal-detail">
+                        {entry.body ? <pre className="terminal-body">{entry.body}</pre> : null}
+                        <div className="stream-raw">
+                          <pre>{JSON.stringify(entry.raw, null, 2)}</pre>
+                        </div>
                       </div>
-                    </div>
-                  </details>
-                ))}
-              </div>
+                    </details>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <p className="empty-title">Waiting for stream events</p>
+                  <p className="empty-copy">
+                    The stream will populate as soon as the backend emits activity for the selected job.
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
-            <p className="muted">No job selected.</p>
+            <div className="empty-state">
+              <p className="empty-title">No job selected</p>
+              <p className="empty-copy">Choose a recent job on the right to inspect its live event stream.</p>
+            </div>
           )}
         </section>
 
         <section className="panel workspace-panel">
-          <div className="panel-head">
-            <h2>Workspaces</h2>
+          <div className="section-heading">
+            <div>
+              <p className="section-label">Allowed paths</p>
+              <h2>Workspaces</h2>
+              <p className="section-copy">Approved project roots for job execution.</p>
+            </div>
             <div className="panel-head-meta">
-              <span>Allowed project paths</span>
+              <span className="pill pill-muted">{readyWorkspaceCount} enabled</span>
               <button
                 className="ghost-button compact-button"
                 onClick={() => setShowWorkspaceForm((current) => !current)}
@@ -987,6 +1155,25 @@ export default function App() {
             </form>
           ) : null}
           <div className="workspace-grid">
+            {isInitialLoading
+              ? Array.from({ length: 3 }, (_, index) => (
+                  <article className="workspace-tile workspace-skeleton" key={`workspace-skeleton-${index}`}>
+                    <span className="workspace-icon skeleton-block" aria-hidden="true" />
+                    <span className="workspace-copy">
+                      <span className="skeleton-line skeleton-line-title" />
+                      <span className="skeleton-line" />
+                    </span>
+                  </article>
+                ))
+              : null}
+            {!isInitialLoading && workspaces.length === 0 ? (
+              <div className="empty-state">
+                <p className="empty-title">No workspace paths yet</p>
+                <p className="empty-copy">
+                  Register an absolute project path so the runtime has an approved execution target.
+                </p>
+              </div>
+            ) : null}
             {workspaces.map((workspace) => (
               <button
                 className={`workspace-tile ${workspacePath === workspace.path ? "workspace-tile-selected" : ""}`}
@@ -1011,22 +1198,65 @@ export default function App() {
         </section>
 
         <section className="panel jobs-panel">
-          <div className="panel-head">
-            <h2>Recent jobs</h2>
+          <div className="section-heading">
+            <div>
+              <p className="section-label">Recent activity</p>
+              <h2>Recent jobs</h2>
+            </div>
             <span className="pill">Live updating</span>
           </div>
           <div className="table-list">
+            {isInitialLoading
+              ? Array.from({ length: 5 }, (_, index) => (
+                  <div className="row row-skeleton" key={`job-skeleton-${index}`}>
+                    <div className="grow">
+                      <div className="skeleton-line skeleton-line-title" />
+                      <div className="skeleton-line skeleton-line-wide" />
+                    </div>
+                  </div>
+                ))
+              : null}
+            {!isInitialLoading && jobs.length === 0 ? (
+              <div className="empty-state">
+                <p className="empty-title">No jobs recorded</p>
+                <p className="empty-copy">Once work is dispatched, the queue and stream history will appear here.</p>
+              </div>
+            ) : null}
             {jobs.map((job) => (
-              <div className={`row ${selectedJobId === job.id ? "row-selected" : ""}`} key={job.id}>
-                <button className="row-button grow" onClick={() => setSelectedJobId(job.id)} type="button">
-                  <span>{job.id.slice(0, 8)}</span>
+              <div
+                className={`row row-interactive row-${normalizeClassName(job.status)} ${selectedJobId === job.id ? "row-selected" : ""}`}
+                key={job.id}
+                onClick={() => setSelectedJobId(job.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSelectedJobId(job.id);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+              >
+                <div className="row-button grow">
+                  <span className="row-primary">
+                    <strong>{job.id.slice(0, 8)}</strong>
+                    <span className={`status status-${normalizeClassName(job.status)}`}>{job.status}</span>
+                  </span>
+                  <small>{job.model}</small>
                   <small>
-                    {job.status} · {job.model} · {accountNameById.get(job.accountId ?? "") ?? job.accountId ?? "-"} ·{" "}
+                    {accountNameById.get(job.accountId ?? "") ?? job.accountId ?? "-"} ·{" "}
                     {workspaceNameById.get(job.workspaceId) ?? job.workspaceId}
                   </small>
-                </button>
+                  <small>{formatDateTime(job.startedAt ?? job.createdAt)}</small>
+                </div>
                 {(job.status === "queued" || job.status === "running") && (
-                  <button onClick={() => void cancelJob(job.id)} type="button">
+                  <button
+                    className="secondary-button compact-button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void cancelJob(job.id);
+                    }}
+                    type="button"
+                  >
                     Cancel
                   </button>
                 )}
