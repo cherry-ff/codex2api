@@ -414,6 +414,26 @@ textarea {
   font-size: 0.72rem;
 }
 
+.panel-select-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--subtle);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.panel-select {
+  width: auto;
+  min-width: 108px;
+  padding: 0.48rem 2rem 0.48rem 0.72rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
 .pill {
   background: var(--accent-soft);
   border: 1px solid rgba(37, 88, 71, 0.14);
@@ -514,6 +534,41 @@ textarea {
 
 .cards-compact {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.account-cards {
+  align-content: start;
+}
+
+.accounts-board {
+  max-height: min(72vh, 860px);
+  overflow: auto;
+  padding-right: 6px;
+  margin-right: -6px;
+}
+
+.accounts-board-dense {
+  max-height: min(76vh, 960px);
+}
+
+.accounts-board::-webkit-scrollbar {
+  width: 10px;
+}
+
+.accounts-board::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(51, 55, 43, 0.14);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.accounts-board::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cards-dense {
+  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  gap: 10px;
 }
 
 .card {
@@ -619,10 +674,29 @@ textarea {
   gap: 12px;
 }
 
+.cards-dense .account-card {
+  gap: 9px;
+  padding: 12px;
+}
+
+.cards-dense .account-card::before {
+  width: 132px;
+  height: 132px;
+  inset: auto -8% 62% auto;
+}
+
 .account-balance-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
   gap: 10px;
+}
+
+.account-balance-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.cards-dense .account-balance-grid {
+  gap: 8px;
 }
 
 .quota-card {
@@ -695,6 +769,18 @@ textarea {
 .quota-card-featured .quota-head strong {
   font-size: 1.3rem;
   line-height: 1;
+}
+
+.cards-dense .quota-card {
+  padding: 10px;
+}
+
+.cards-dense .quota-head strong {
+  font-size: 0.9rem;
+}
+
+.cards-dense .quota-card-featured .quota-head strong {
+  font-size: 1.08rem;
 }
 
 .quota-meter {
@@ -780,6 +866,12 @@ textarea {
   padding: 0.56rem 0.82rem;
 }
 
+.cards-dense .account-actions button {
+  min-width: 0;
+  flex: 1 1 0;
+  padding-inline: 0.68rem;
+}
+
 .account-action-button {
   min-width: 88px;
   background:
@@ -822,6 +914,27 @@ textarea {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.58),
     0 10px 18px rgba(41, 44, 36, 0.05);
+}
+
+.account-action-button-danger {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.12)),
+    rgba(159, 63, 51, 0.1);
+  color: var(--danger);
+  border-color: rgba(159, 63, 51, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 8px 16px rgba(159, 63, 51, 0.08);
+}
+
+.account-action-button-danger:hover {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.16)),
+    rgba(159, 63, 51, 0.14);
+  border-color: rgba(159, 63, 51, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.56),
+    0 10px 18px rgba(159, 63, 51, 0.1);
 }
 
 .status {
@@ -887,6 +1000,14 @@ textarea {
 
 .add-card-open {
   align-items: stretch;
+}
+
+.cards-dense .add-card {
+  min-height: 170px;
+}
+
+.cards-dense .add-card-button {
+  min-height: 144px;
 }
 
 .add-card-button {

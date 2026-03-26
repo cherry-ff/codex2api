@@ -170,6 +170,13 @@ export class AppDb {
     return this.listAccounts().find((account) => account.id === accountId) ?? null;
   }
 
+  deleteAccount(accountId: string): boolean {
+    const result = this.db.prepare("DELETE FROM accounts WHERE id = ?").run(accountId) as {
+      changes?: number;
+    };
+    return Number(result.changes ?? 0) > 0;
+  }
+
   upsertAccount(input: {
     id: string;
     name: string;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 const ADMIN_TOKEN_STORAGE_KEY = "codex2api.adminToken";
+const JOB_LIMIT_OPTIONS = [10, 25, 50, 100];
 
 type RateLimitWindow = {
   usedPercent: number;
@@ -335,6 +336,8 @@ function streamLevel(entry: StreamEntry): string {
       return "DONE";
     case "Running":
       return "LIVE";
+    case "Retrying":
+      return "RETRY";
     case "Usage":
       return "METRIC";
     case "User prompt":
@@ -373,6 +376,26 @@ function toStreamEntry(event: JobEvent, index: number, accountNames: Map<string,
           createdAt: event.createdAt,
           tone: "accent",
           meta: `account ${accountLabel} · workspace ${String(event.payload.workspaceId ?? "-")}`,
+          raw: event.payload
+        };
+      }
+    case "job.retrying":
+      {
+        const failedAccountId =
+          typeof event.payload.failedAccountId === "string" ? event.payload.failedAccountId : null;
+        const nextAccountId =
+          typeof event.payload.accountId === "string" ? event.payload.accountId : null;
+        const failedAccountLabel = failedAccountId
+          ? accountNames.get(failedAccountId) ?? failedAccountId
+          : "-";
+        const nextAccountLabel = nextAccountId ? accountNames.get(nextAccountId) ?? nextAccountId : "-";
+        return {
+          id: `${event.createdAt}-${index}`,
+          title: "Retrying",
+          createdAt: event.createdAt,
+          tone: "accent",
+          meta: `${failedAccountLabel} -> ${nextAccountLabel}`,
+          body: typeof event.payload.error === "string" ? event.payload.error : undefined,
           raw: event.payload
         };
       }
@@ -534,6 +557,7 @@ export default function App() {
   const [showWorkspaceForm, setShowWorkspaceForm] = useState(false);
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspacePath, setWorkspacePath] = useState("");
+  const [jobListLimit, setJobListLimit] = useState(10);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -568,6 +592,7 @@ export default function App() {
     overview?.runningJobCount ?? jobs.filter((job) => job.status === "running").length;
   const readyWorkspaceCount = workspaces.filter((workspace) => workspace.enabled).length;
   const latestJob = jobs[0] ?? null;
+  const useDenseAccountsLayout = accounts.length >= 7;
   const isInitialLoading =
     overview === null &&
     accounts.length === 0 &&
@@ -581,7 +606,7 @@ export default function App() {
         api<Overview>("/api/dashboard/overview"),
         api<{ data: Account[] }>("/api/accounts"),
         api<{ data: Workspace[] }>("/api/workspaces"),
-        api<{ data: Job[] }>("/api/jobs")
+        api<{ data: Job[] }>(`/api/jobs?limit=${jobListLimit}`)
       ]);
 
       setOverview(overviewResult);
@@ -608,7 +633,7 @@ export default function App() {
     }, 5000);
 
     return () => window.clearInterval(timer);
-  }, []);
+  }, [jobListLimit]);
 
   useEffect(() => {
     if (jobs.length === 0) {
@@ -783,6 +808,25 @@ export default function App() {
     }
   }
 
+  async function deleteAccount(accountId: string) {
+    const accountLabel = accountNameById.get(accountId) ?? accountId;
+    if (!window.confirm(`Delete account "${accountLabel}" and remove its stored auth.json?`)) {
+      return;
+    }
+
+    try {
+      setBusy(`delete-${accountId}`);
+      await api(`/api/accounts/${accountId}`, {
+        method: "DELETE"
+      });
+      await refreshAll();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Account delete failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function cancelJob(jobId: string) {
     try {
       setBusy(`cancel-${jobId}`);
@@ -896,7 +940,8 @@ export default function App() {
             </button>
           </div>
         </div>
-        <div className="cards cards-compact">
+        <div className={`accounts-board ${useDenseAccountsLayout ? "accounts-board-dense" : ""}`}>
+          <div className={`cards cards-compact account-cards ${useDenseAccountsLayout ? "cards-dense" : ""}`}>
           {isInitialLoading
             ? Array.from({ length: 4 }, (_, index) => (
                 <article className="card skeleton-card" key={`account-skeleton-${index}`}>
@@ -912,7 +957,7 @@ export default function App() {
             <article className="card empty-card">
               <p className="empty-title">No accounts imported</p>
               <p className="empty-copy">
-                Add an `auth.json` cache to start routing Codex work through this surface.
+                Add an `auth.json` cache to start routing Codex work through this surface. Expired auth can be deleted and re-imported.
               </p>
             </article>
           ) : null}
@@ -922,6 +967,18 @@ export default function App() {
             const secondary = rateLimit?.secondary;
             const primaryLabel = formatWindowLabel(primary?.windowDurationMins ?? null);
             const secondaryLabel = formatWindowLabel(secondary?.windowDurationMins ?? null);
+            const quotas = [
+              { label: primaryLabel, window: primary, featured: true },
+              { label: secondaryLabel, window: secondary, featured: false }
+            ].filter(
+              (
+                quota
+              ): quota is { label: string; window: RateLimitWindow; featured: boolean } => quota.window !== null
+            );
+            const accountBusy =
+              busy === `refresh-${account.id}` ||
+              busy === `restart-${account.id}` ||
+              busy === `delete-${account.id}`;
             return (
               <article
                 className={`card account-card account-card-compact tone-${normalizeClassName(account.status)}`}
@@ -936,11 +993,10 @@ export default function App() {
                     {account.status}
                   </span>
                 </div>
-                <div className="account-balance-grid">
-                  {[
-                    { label: primaryLabel, window: primary, featured: true },
-                    { label: secondaryLabel, window: secondary, featured: false }
-                  ].map((quota) => (
+                <div
+                  className={`account-balance-grid ${quotas.length <= 1 ? "account-balance-grid-single" : ""}`}
+                >
+                  {quotas.map((quota) => (
                     <div
                       className={`quota-card ${quota.featured ? "quota-card-featured" : "quota-card-secondary"} quota-card-tone-${quotaTone(quota.window)}`}
                       key={`${account.id}-${quota.label}`}
@@ -967,17 +1023,24 @@ export default function App() {
                 <div className="action-row account-actions">
                   <button
                     className="account-action-button"
-                    disabled={busy === `refresh-${account.id}`}
+                    disabled={accountBusy}
                     onClick={() => void refreshAccount(account.id)}
                   >
                     {busy === `refresh-${account.id}` ? "Refreshing..." : "Refresh"}
                   </button>
                   <button
                     className="secondary-button account-action-button account-action-button-secondary"
-                    disabled={busy === `restart-${account.id}`}
+                    disabled={accountBusy}
                     onClick={() => void restartAccount(account.id)}
                   >
                     {busy === `restart-${account.id}` ? "Restarting..." : "Restart"}
+                  </button>
+                  <button
+                    className="secondary-button account-action-button account-action-button-danger"
+                    disabled={accountBusy}
+                    onClick={() => void deleteAccount(account.id)}
+                  >
+                    {busy === `delete-${account.id}` ? "Deleting..." : "Delete"}
                   </button>
                 </div>
               </article>
@@ -996,7 +1059,7 @@ export default function App() {
                   <div className="card-head">
                     <div>
                       <h3>Import account</h3>
-                      <p>Use a local auth cache</p>
+                      <p>Use a local auth cache. Delete stale auth first, then re-import.</p>
                     </div>
                     <button
                       className="ghost-button"
@@ -1020,6 +1083,9 @@ export default function App() {
                     accept="application/json"
                     onChange={(event) => setAuthFile(event.target.files?.[0] ?? null)}
                   />
+                  <p className="empty-copy">
+                    If this account was imported before and the token has expired, delete the old card first so the new `auth.json` can replace it cleanly.
+                  </p>
                   <button disabled={busy === "import-account"} type="submit">
                     {busy === "import-account" ? "Importing..." : "Import auth.json"}
                   </button>
@@ -1027,6 +1093,7 @@ export default function App() {
               )}
             </article>
           ) : null}
+          </div>
         </div>
       </section>
 
@@ -1203,7 +1270,23 @@ export default function App() {
               <p className="section-label">Recent activity</p>
               <h2>Recent jobs</h2>
             </div>
-            <span className="pill">Live updating</span>
+            <div className="panel-head-meta">
+              <label className="panel-select-label">
+                <span>Show</span>
+                <select
+                  className="panel-select"
+                  onChange={(event) => setJobListLimit(Number(event.target.value))}
+                  value={jobListLimit}
+                >
+                  {JOB_LIMIT_OPTIONS.map((limit) => (
+                    <option key={limit} value={limit}>
+                      {limit} jobs
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="pill">Live updating</span>
+            </div>
           </div>
           <div className="table-list">
             {isInitialLoading

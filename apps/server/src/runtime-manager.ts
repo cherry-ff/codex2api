@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 
 import { config, writeAccountConfigFile } from "./config.js";
 import { CodexAppServerClient } from "./codex-app-server.js";
@@ -105,6 +106,10 @@ export class RuntimeManager {
     return record;
   }
 
+  getAccount(accountId: string): AccountRecord | null {
+    return this.db.getAccount(accountId);
+  }
+
   async ensureRuntime(accountId: string): Promise<CodexAppServerClient> {
     const existing = this.runtimes.get(accountId);
     if (existing) {
@@ -175,6 +180,14 @@ export class RuntimeManager {
     await this.ensureRuntime(accountId);
   }
 
+  async markAccountError(accountId: string, message: string): Promise<void> {
+    await this.stopRuntime(accountId);
+    this.db.updateAccountState(accountId, {
+      status: "error",
+      lastError: message
+    });
+  }
+
   async stopRuntime(accountId: string): Promise<void> {
     const runtime = this.runtimes.get(accountId);
     if (!runtime) {
@@ -186,6 +199,23 @@ export class RuntimeManager {
     this.db.updateAccountState(accountId, {
       status: "stopped"
     });
+  }
+
+  async deleteAccount(accountId: string): Promise<void> {
+    const account = this.db.getAccount(accountId);
+    if (!account) {
+      throw new Error(`account ${accountId} not found`);
+    }
+
+    if (this.getRuntime(accountId)?.busy) {
+      throw new Error("account is busy");
+    }
+
+    await this.stopRuntime(accountId);
+
+    const accountRoot = resolveAccountRoot(account.codexHome);
+    await rm(accountRoot, { recursive: true, force: true });
+    this.db.deleteAccount(accountId);
   }
 
   async stopAll(): Promise<void> {
@@ -213,4 +243,21 @@ export class RuntimeManager {
         return leftUsage - rightUsage;
       });
   }
+}
+
+function resolveAccountRoot(codexHome: string): string {
+  const resolvedCodexHome = path.resolve(codexHome);
+  const accountRoot = path.dirname(resolvedCodexHome);
+  const resolvedAccountsDir = path.resolve(config.accountsDir);
+  const relative = path.relative(resolvedAccountsDir, accountRoot);
+
+  if (
+    path.basename(resolvedCodexHome) !== ".codex" ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error("refusing to delete account outside accounts dir");
+  }
+
+  return accountRoot;
 }

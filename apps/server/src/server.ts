@@ -23,6 +23,15 @@ function isInputValidationError(error: unknown): boolean {
   return message.startsWith("invalid multimodal input:");
 }
 
+function parseListLimit(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.min(200, Math.floor(parsed));
+}
+
 export async function buildServer() {
   const db = new AppDb(config.dbPath);
   db.seedDefaultWorkspace(config.defaultWorkspacePath);
@@ -102,6 +111,25 @@ export async function buildServer() {
     };
   });
 
+  app.delete("/api/accounts/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const account = db.getAccount(id);
+    if (!account) {
+      return reply.code(404).send({ error: "account not found" });
+    }
+
+    try {
+      await runtimeManager.deleteAccount(id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "failed to delete account";
+      return reply.code(message === "account is busy" ? 409 : 500).send({ error: message });
+    }
+
+    return {
+      ok: true
+    };
+  });
+
   app.get("/api/workspaces", async () => ({
     data: db.listWorkspaces()
   }));
@@ -123,9 +151,12 @@ export async function buildServer() {
     };
   });
 
-  app.get("/api/jobs", async () => ({
-    data: db.listJobs()
-  }));
+  app.get("/api/jobs", async (request) => {
+    const { limit } = request.query as { limit?: string };
+    return {
+      data: db.listJobs(parseListLimit(limit, 10))
+    };
+  });
 
   app.get("/api/jobs/:id", async (request, reply) => {
     const { id } = request.params as { id: string };

@@ -21,6 +21,24 @@ interface QueuedJob {
   reject: (error: Error) => void;
 }
 
+const ACCOUNT_FAILURE_PATTERNS = [
+  "auth",
+  "token",
+  "credential",
+  "missing account",
+  "quota",
+  "rate limit",
+  "plan",
+  "chatgpt",
+  "unauthorized",
+  "forbidden",
+  "expired",
+  "session",
+  "sign in",
+  "login",
+  "app-server exited"
+];
+
 export class JobQueue {
   private readonly queuedJobs: QueuedJob[] = [];
   private readonly eventBus = new EventEmitter();
@@ -150,8 +168,12 @@ export class JobQueue {
     }
   }
 
-  private pickAccount() {
+  private pickAccount(excludedAccountIds: Iterable<string> = []) {
+    const excluded = new Set(excludedAccountIds);
     return this.runtimeManager.getReadyAccounts().find((account) => {
+      if (excluded.has(account.id)) {
+        return false;
+      }
       const runtime = this.runtimeManager.getRuntime(account.id);
       return runtime && !runtime.busy;
     });
@@ -172,57 +194,164 @@ export class JobQueue {
   }
 
   private async runJob(candidate: QueuedJob, accountId: string, workspace: WorkspaceRecord): Promise<void> {
-    const runtime = await this.runtimeManager.ensureRuntime(accountId);
-    const startedAt = new Date().toISOString();
     let preparedInput = candidate.request.preparedInput;
-
-    this.db.updateJob(candidate.job.id, {
-      accountId,
-      status: "running",
-      startedAt
-    });
-
-    this.emitJobEvent(candidate.job.id, {
-      type: "job.running",
-      payload: { accountId, workspaceId: workspace.id },
-      createdAt: startedAt
-    });
+    let currentAccountId = accountId;
+    let startedAt: string | null = null;
+    const attemptedAccountIds = new Set<string>();
 
     try {
       preparedInput ??= await prepareCodexInput(candidate.request.messages, workspace.path);
 
-      const result = await runtime.execute({
-        model: candidate.request.model,
-        cwd: workspace.path,
-        input: preparedInput.input,
-        sandbox: config.defaultSandbox,
-        approvalPolicy: config.defaultApprovalPolicy,
-        timeoutMs: config.turnTimeoutMs,
-        onEvent: (event) => this.emitJobEvent(candidate.job.id, event)
-      });
+      while (true) {
+        attemptedAccountIds.add(currentAccountId);
 
-      this.handleCompletion(candidate.job.id, result);
-      candidate.resolve(result);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "job failed";
-      const status: JobStatus = message === "job timed out" ? "timeout" : "failed";
-      this.db.updateJob(candidate.job.id, {
-        status,
-        errorMessage: message,
-        finishedAt: new Date().toISOString()
-      });
-      this.emitJobEvent(candidate.job.id, {
-        type: "job.failed",
-        payload: { error: message, status },
-        createdAt: new Date().toISOString()
-      });
-      candidate.reject(new Error(message));
+        const runningAt = new Date().toISOString();
+        if (!startedAt) {
+          startedAt = runningAt;
+        }
+
+        this.db.updateJob(candidate.job.id, {
+          accountId: currentAccountId,
+          status: "running",
+          startedAt,
+          errorMessage: null
+        });
+        this.runningJobs.set(candidate.job.id, {
+          accountId: currentAccountId,
+          workspaceId: workspace.id
+        });
+
+        this.emitJobEvent(candidate.job.id, {
+          type: "job.running",
+          payload: {
+            accountId: currentAccountId,
+            workspaceId: workspace.id,
+            attempt: attemptedAccountIds.size
+          },
+          createdAt: runningAt
+        });
+
+        try {
+          const runtime = await this.runtimeManager.ensureRuntime(currentAccountId);
+          const result = await runtime.execute({
+            model: candidate.request.model,
+            cwd: workspace.path,
+            input: preparedInput.input,
+            sandbox: config.defaultSandbox,
+            approvalPolicy: config.defaultApprovalPolicy,
+            timeoutMs: config.turnTimeoutMs,
+            onEvent: (event) => this.emitJobEvent(candidate.job.id, event)
+          });
+
+          if (result.status !== "failed") {
+            this.handleCompletion(candidate.job.id, result);
+            candidate.resolve(result);
+            return;
+          }
+
+          const message = result.errorMessage ?? "job failed";
+          const retryAccountId = await this.retryOnAnotherAccountIfNeeded(
+            candidate.job.id,
+            currentAccountId,
+            attemptedAccountIds,
+            workspace.id,
+            message
+          );
+
+          if (!retryAccountId) {
+            this.handleCompletion(candidate.job.id, result);
+            candidate.reject(new Error(message));
+            return;
+          }
+
+          currentAccountId = retryAccountId;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "job failed";
+          const retryAccountId = await this.retryOnAnotherAccountIfNeeded(
+            candidate.job.id,
+            currentAccountId,
+            attemptedAccountIds,
+            workspace.id,
+            message
+          );
+
+          if (retryAccountId) {
+            currentAccountId = retryAccountId;
+            continue;
+          }
+
+          const status: JobStatus = message === "job timed out" ? "timeout" : "failed";
+          this.db.updateJob(candidate.job.id, {
+            status,
+            errorMessage: message,
+            finishedAt: new Date().toISOString()
+          });
+          this.emitJobEvent(candidate.job.id, {
+            type: "job.failed",
+            payload: { error: message, status },
+            createdAt: new Date().toISOString()
+          });
+          candidate.reject(new Error(message));
+          return;
+        }
+      }
     } finally {
       await this.cleanupPreparedFiles(preparedInput?.cleanupPaths ?? []);
       this.runningJobs.delete(candidate.job.id);
       this.workspaceLocks.delete(workspace.id);
       void this.schedule();
     }
+  }
+
+  private async retryOnAnotherAccountIfNeeded(
+    jobId: string,
+    failedAccountId: string,
+    attemptedAccountIds: Set<string>,
+    workspaceId: string,
+    message: string
+  ): Promise<string | null> {
+    if (!this.isRetryableAccountFailure(failedAccountId, message)) {
+      return null;
+    }
+
+    await this.runtimeManager.markAccountError(failedAccountId, message);
+
+    const nextAccount = this.pickAccount(attemptedAccountIds);
+    if (!nextAccount) {
+      return null;
+    }
+
+    this.emitJobEvent(jobId, {
+      type: "job.retrying",
+      payload: {
+        failedAccountId,
+        accountId: nextAccount.id,
+        workspaceId,
+        error: message,
+        attempt: attemptedAccountIds.size + 1
+      },
+      createdAt: new Date().toISOString()
+    });
+
+    return nextAccount.id;
+  }
+
+  private isRetryableAccountFailure(accountId: string, message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    if (normalized === "job timed out" || normalized === "job cancelled" || normalized === "job canceled") {
+      return false;
+    }
+
+    const account = this.runtimeManager.getAccount(accountId);
+    if (!account || account.status !== "ready") {
+      return true;
+    }
+
+    return ACCOUNT_FAILURE_PATTERNS.some((pattern) => normalized.includes(pattern));
   }
 
   private handleCompletion(jobId: string, result: JobExecutionResult): void {
